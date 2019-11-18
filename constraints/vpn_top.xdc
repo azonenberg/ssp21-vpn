@@ -68,6 +68,10 @@ set_property PACKAGE_PIN P8 [get_ports eth0_tx_clk]
 set_property IOSTANDARD LVCMOS33 [get_ports eth0_tx_clk]
 set_property PACKAGE_PIN T8 [get_ports eth0_tx_ctl]
 set_property IOSTANDARD LVCMOS33 [get_ports eth0_tx_ctl]
+set_property IOSTANDARD LVCMOS33 [get_ports i2c_scl]
+set_property IOSTANDARD LVCMOS33 [get_ports i2c_sda]
+set_property PACKAGE_PIN H14 [get_ports i2c_sda]
+set_property PACKAGE_PIN H16 [get_ports i2c_scl]
 
 create_clock -period 40.000 -name clk_25mhz -waveform {0.000 20.000} [get_ports clk_25mhz]
 create_clock -period 8.000 -name eth0_rx_clk -waveform {0.000 4.000} [get_ports eth0_rx_clk]
@@ -79,3 +83,9 @@ set_clock_groups -asynchronous -group [get_clocks eth0_rx_clk] -group [get_clock
 set_clock_groups -asynchronous -group [get_clocks eth1_rx_clk] -group [get_clocks clk_125mhz]
 set_clock_groups -asynchronous -group [get_clocks clk_125mhz] -group [get_clocks eth0_rx_clk]
 set_clock_groups -asynchronous -group [get_clocks clk_125mhz] -group [get_clocks eth1_rx_clk]
+
+set_clock_groups -asynchronous -group [get_clocks eth0_rx_clk] -group [get_clocks clk_system]
+set_clock_groups -asynchronous -group [get_clocks clk_system] -group [get_clocks eth0_rx_clk]
+
+set_max_delay -datapath_only -from [get_cells -hierarchical -filter { NAME =~  "*reg_a_ff*" && NAME =~  "*sync*" }] -to [get_cells -hierarchical *reg_b*] 5.000
+set_max_delay -datapath_only -from [get_cells -hierarchical -filter { NAME =~  "*dout0_reg*" && NAME =~  "*sync*" }] -to [get_cells -hierarchical -filter { NAME =~  "*dout1_reg*" && NAME =~  "*sync*" }] 5.000

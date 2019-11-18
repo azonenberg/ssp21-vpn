@@ -61,14 +61,13 @@ module vpn_top(
 	inout wire			eth1_mdio,
 	output logic		eth1_rst_n		= 0,
 
+	//I2C bus to MAC addr eeprom
+	inout wire			i2c_sda,
+	output wire			i2c_scl,
+
 	//Debug LEDs
 	output logic[3:0]	led				= 0
 	);
-
-	`include "GmiiBus.svh"
-	`include "EthernetBus.svh"
-	`include "IPv4Bus.svh"
-	`include "UDPv4Bus.svh"
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Clock synthesis
@@ -110,7 +109,72 @@ module vpn_top(
 	end
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// I2C bus for module-side peripherals
+
+	`include "I2CTransceiver.svh"
+
+	i2c_in_t txvr_cin;
+	i2c_out_t txvr_cout;
+
+	I2CTransceiver i2c_txvr(
+		.clk(clk_system),
+		.clkdiv(16'd250),		//400 kHz
+		.i2c_scl(i2c_scl),
+		.i2c_sda(i2c_sda),
+		.cin(txvr_cin),
+		.cout(txvr_cout)
+	);
+
+	i2c_in_t	mac_driver_cin;
+	i2c_out_t	mac_driver_cout;
+
+	wire		mac_driver_request;
+	wire		mac_driver_done;
+	wire		mac_driver_ack;
+
+	I2CArbiter #(
+		.NUM_PORTS(1)
+	) i2c_arbiter(
+		.clk(clk_system),
+
+		.driver_request(mac_driver_request),
+		.driver_done(mac_driver_done),
+		.driver_ack(mac_driver_ack),
+		.driver_cin(mac_driver_cin),
+		.driver_cout(mac_driver_cout),
+
+		.txvr_cin(txvr_cin),
+		.txvr_cout(txvr_cout)
+		);
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// MAC address generator
+
+	wire		mac_addr_done;
+	wire[47:0]	mac_addr;
+
+	//Read from the EEPROM
+	I2CMACAddressReader mac_reader(
+		.clk(clk_system),
+
+		.driver_req(mac_driver_request),
+		.driver_ack(mac_driver_ack),
+		.driver_done(mac_driver_done),
+		.driver_cin(mac_driver_cin),
+		.driver_cout(mac_driver_cout),
+
+		.done(mac_addr_done),
+		.mac(mac_addr)
+	);
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// MAC and RGMII bridge for both Ethernet interfaces
+
+	`include "GmiiBus.svh"
+	`include "EthernetBus.svh"
+	`include "IPv4Bus.svh"
+	`include "UDPv4Bus.svh"
+	`include "TCPv4Bus.svh"
 
 	wire				eth0_link_up;
 	wire				eth0_mac_rx_clk;
@@ -166,5 +230,56 @@ module vpn_top(
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// IP stack for eth0
+
+	IPv4Config ip_config;
+	assign ip_config.address	= {8'd10, 8'd2, 8'd6, 8'd10};
+	assign ip_config.mask		= 32'hffffff00;
+	assign ip_config.gateway	= {8'd10, 8'd2, 8'd6, 8'd252};
+
+	UDPv4RxBus	eth0_udpv4_rx_bus;
+	UDPv4TxBus	eth0_udpv4_tx_bus = {$bits(UDPv4TxBus){1'b0}};
+
+	TCPIPStack #(
+		.LINK_SPEED_IS_10G(0),
+		.CLK_IPSTACK_HZ(100000000)
+	) ipstack (
+		.clk_ipstack(clk_system),
+
+		.ip_config(ip_config),
+		.mac_address(mac_addr),
+		.promisc_mode(1'b0),
+		.config_update(mac_addr_done),
+
+		.mac_rx_clk(eth0_mac_rx_clk),
+		.mac_rx_bus(eth0_mac_rx_bus),
+		.mac_tx_clk(clk_125mhz),
+		.mac_tx_bus(eth0_mac_tx_bus),
+		.mac_tx_ready(eth0_mac_tx_ready),
+
+		.udpv4_rx_bus(eth0_udpv4_rx_bus),
+		.udpv4_tx_bus(eth0_udpv4_tx_bus)
+	);
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Debug LA
+
+	/*
+	ila_0 ila(
+		.clk(clk_system),
+		.probe0(reader.driver_req),
+		.probe1(reader.driver_ack),
+		.probe2(reader.driver_done),
+		.probe3(reader.done),
+		.probe4(reader.mac),
+		.probe5(reader.open),
+		.probe6(reader.ready),
+		.probe7(reader.select),
+		.probe8(reader.rdata_valid),
+		.probe9(reader.rdata),
+		.probe10(reader.err),
+		.probe11(reader.burst_done),
+		.probe12(reader.state)
+	);
+	*/
 
 endmodule
