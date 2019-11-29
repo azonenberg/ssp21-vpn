@@ -187,10 +187,15 @@ set_property PACKAGE_PIN H4 [get_ports {eth3_led_1v8_n[0]}]
 
 create_clock -period 8.000 -name eth2_rx_clk -waveform {0.000 4.000} [get_ports eth2_rx_clk]
 create_clock -period 8.000 -name eth3_rx_clk -waveform {0.000 4.000} [get_ports eth3_rx_clk]
+
+set_property PULLDOWN true [get_ports eth2_rx_clk]
+set_property PULLDOWN true [get_ports eth3_rx_clk]
+
+set_property IOSTANDARD LVCMOS25 [get_ports {eth0_led[1]}]
+set_property IOSTANDARD LVCMOS25 [get_ports {eth0_led[0]}]
+set_property PACKAGE_PIN P5 [get_ports {eth0_led[0]}]
+set_property PACKAGE_PIN L5 [get_ports {eth0_led[1]}]
 set_property C_CLK_INPUT_FREQ_HZ 300000000 [get_debug_cores dbg_hub]
 set_property C_ENABLE_CLK_DIVIDER false [get_debug_cores dbg_hub]
 set_property C_USER_SCAN_CHAIN 1 [get_debug_cores dbg_hub]
 connect_debug_port dbg_hub/clk [get_nets clk_system]
-
-set_property PULLDOWN true [get_ports eth2_rx_clk]
-set_property PULLDOWN true [get_ports eth3_rx_clk]
