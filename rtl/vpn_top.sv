@@ -83,6 +83,9 @@ module vpn_top(
 	inout wire			eth3_mdio,
 	output logic		eth3_rst_n		= 0,
 
+	//LEDs for on-module PHY
+	output logic[1:0]	eth0_led		= 2'b10,
+
 	//Level shifting of LEDs to 1.8V PHY
 	input wire[1:0]		eth3_led_1v8_n,
 	output wire[1:0]	eth3_led_n,
@@ -284,9 +287,11 @@ module vpn_top(
 	assign eth1_phy_reg_wr = eth1_wr && !eth1_wr_ff;
 	assign eth1_phy_reg_rd = eth1_rd && !eth1_rd_ff;
 
+	wire[4:0] eth1_phy_md_addr;
+
 	EthernetMDIOTransceiver eth1_mdio_txvr(
 		.clk_125mhz(clk_125mhz),
-		.phy_md_addr(5'h0),
+		.phy_md_addr(eth1_phy_md_addr),
 		.mdio_tx_data(eth1_mdio_tx_data),
 		.mdio_tx_en(eth1_mdio_tx_en),
 		.mdio_rx_data(eth1_mdio_rx_data),
@@ -414,7 +419,8 @@ module vpn_top(
 		.probe_out12(eth3_phy_reg_addr),
 		.probe_out13(eth3_phy_wr_data),
 		.probe_out14(eth3_wr),
-		.probe_out15(eth3_rd)
+		.probe_out15(eth3_rd),
+		.probe_out16(eth1_phy_md_addr)
 	);
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -451,6 +457,29 @@ module vpn_top(
 
 		.link_up(eth0_link_up)
 	);
+
+	//Drive left LED to link state, right is RX activity state (TODO include TX)
+	logic[23:0] bcount = 0;
+	always_ff @(posedge eth0_rx_clk) begin
+		eth0_led[1]	<= eth0_link_up;
+
+		if(eth0_mac_rx_bus.start) begin
+			eth0_led[0]	<= 1;
+			bcount		<= 1;
+		end
+
+		if(bcount == 0)
+			eth0_led[0]	<= 0;
+		else
+			bcount <= bcount + 1;
+	end
+
+	always_comb begin
+		led[0]	<= eth0_link_up;
+		led[1]	<= eth1_link_up;
+		led[2]	<= eth2_link_up;
+		led[3]	<= eth3_link_up;
+	end
 
 	wire				eth1_link_up;
 	wire				eth1_mac_rx_clk;
@@ -590,22 +619,14 @@ module vpn_top(
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Debug LA
 
-	/*
 	ila_2 tx_ila(
 		.clk(clk_system),
-		.probe0(i2c_txvr.state),
-		.probe1(i2c_txvr.sda_in),
-		.probe2(i2c_txvr.sda_out),
-		.probe3(i2c_txvr.bitcount),
-		.probe4(i2c_txvr.cin),
-		.probe5(i2c_txvr.i2c_scl),
-
-		.probe6(mac_reader.helper.state),
-		.probe7(mac_reader.helper.bytes_left),
-
-		.trig_out(trigger),
-		.trig_out_ack(trigger)
+		.probe0(eth0_ipstack.ipv4_tx_l2_bus),
+		.probe1(eth0_ipstack.ipv4_tx_l3_bus),
+		.probe2(eth0_ipstack.ipv4_tx_arp_bus),
+		.probe3(eth0_ipstack.arp_query_en),
+		.probe4(eth0_ipstack.arp_query_ip),
+		.probe5(eth0_ipstack.tx_l2_bus)
 	);
-	*/
 
 endmodule
