@@ -41,6 +41,7 @@ module ClockGeneration(
 	output wire	clk_125mhz,	//125 MHz Ethernet clock
 	output wire	clk_250mhz,	//250 MHz RGMII SERDES clock
 	output wire	clk_200mhz,	//200 MHz IODELAY clock
+	output wire	clk_50mhz,	//50 MHz clock for DNA_PORT
 
 	output wire	pll_locked
 );
@@ -48,10 +49,11 @@ module ClockGeneration(
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Clock generation PLL
 
-	wire[1:0]	clk_unused;
+	wire		clk_unused;
 
 	ReconfigurablePLL #(
-		.OUTPUT_BUF_GLOBAL(3'b001111),
+		.OUTPUT_GATE(6'b011111),
+		.OUTPUT_BUF_GLOBAL(6'b011111),
 		.OUTPUT_BUF_LOCAL(6'b000000),
 		.OUTPUT_BUF_IO(6'b000000),
 		.IN0_PERIOD(40),
@@ -59,8 +61,8 @@ module ClockGeneration(
 		.OUT0_MIN_PERIOD(10),	//100 MHz for system core
 		.OUT1_MIN_PERIOD(8),	//125 MHz for Ethernet
 		.OUT2_MIN_PERIOD(4),	//250 MHz for RGMII oversampling (DDR)
-		.OUT3_MIN_PERIOD(5),	//IODELAY clock
-		.OUT4_MIN_PERIOD(10),
+		.OUT3_MIN_PERIOD(5),	//200 MHz IODELAY clock
+		.OUT4_MIN_PERIOD(20),	//50 MHz DNA_PORT clock
 		.OUT5_MIN_PERIOD(10),
 		.OUT0_DEFAULT_PHASE(0),
 		.OUT1_DEFAULT_PHASE(0),
@@ -70,7 +72,7 @@ module ClockGeneration(
 	) pll (
 		.clkin({ clk_25mhz, clk_25mhz }),
 		.clksel(1'b0),
-		.clkout({clk_unused, clk_200mhz, clk_250mhz, clk_125mhz, clk_system}),
+		.clkout({clk_unused, clk_50mhz, clk_200mhz, clk_250mhz, clk_125mhz, clk_system}),
 		.reset(1'b0),
 		.locked(pll_locked),
 		.busy(),
