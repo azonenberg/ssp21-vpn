@@ -110,6 +110,7 @@ module vpn_top(
 	wire	clk_125mhz;
 	wire	clk_250mhz;
 	wire	clk_200mhz;
+	wire	clk_50mhz;
 
 	wire	pll_locked;
 
@@ -120,13 +121,95 @@ module vpn_top(
 		.clk_125mhz(clk_125mhz),
 		.clk_250mhz(clk_250mhz),
 		.clk_200mhz(clk_200mhz),
+		.clk_50mhz(clk_50mhz),
 		.pll_locked(pll_locked)
 		);
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // On-die ring oscillator
+
+    wire clk_ring_raw;
+    wire cclk;
+    wire cclk_tris	= 0;
+
+	STARTUPE2 #(
+		.PROG_USR("FALSE"),		//Don't lock resets (requires encrypted bitstream)
+		.SIM_CCLK_FREQ(15.0)	//Default to 66 MHz clock for simulation boots
+	)
+	startup (
+		.CFGCLK(),				//Configuration clock not used
+		.CFGMCLK(clk_ring_raw),	//Internal configuration oscillator
+		.EOS(),					//End-of-startup ignored
+		.CLK(),					//Configuration clock not used
+		.GSR(1'b0),				//Not using GSR
+		.GTS(1'b0),				//Not using GTS
+		.KEYCLEARB(1'b1),		//Not zeroizing BBRAM
+		.PREQ(),				//PROG_B request not used
+		.PACK(1'b0),			//PROG_B ack not used
+
+		.USRCCLKO(cclk),		//CCLK pin
+		.USRCCLKTS(cclk_tris),	//Assert to tristate CCLK
+
+		.USRDONEO(1'b1),		//Hold DONE pin high
+		.USRDONETS(1'b1)		//Do not tristate DONE pin
+		);
+
+	wire clk_ring;
+	ClockBuffer #(
+		.TYPE("GLOBAL"),
+		.CE("NO")
+	) bufg_intosc (
+		.clkin(clk_ring_raw),
+		.clkout(clk_ring),
+		.ce(1'b1)
+	);
+
+	assign cclk = 0;
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// I/O delay calibration
 
 	IODelayCalibration cal(.refclk(clk_200mhz));
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Read the FPGA die serial number etc
+
+	wire[63:0]	die_serial;
+	wire		die_serial_valid;
+	wire[31:0]	idcode;
+	wire		idcode_valid;
+
+	DeviceInfo_7series fpga_info(
+		.clk(clk_50mhz),
+		.die_serial(die_serial),
+		.die_serial_valid(die_serial_valid),
+		.idcode(idcode),
+		.idcode_valid(idcode_valid)
+	);
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Interface to on die ADC
+
+	wire[15:0]	die_temp;
+	wire[15:0]	volt_core;
+	wire[15:0]	volt_ram;
+	wire[15:0]	volt_aux;
+	wire		sensors_update;
+
+	OnDieSensors_7series sensors(
+		.clk(clk_system),
+		.vin_p(16'h0),
+		.vin_n(16'h0),
+
+		.die_temp(die_temp),
+		.volt_core(volt_core),
+		.volt_ram(volt_ram),
+		.volt_aux(volt_aux),
+		.sensors_update(sensors_update),
+
+		.ext_in(),
+		.ext_update()
+	);
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Reset control
@@ -154,31 +237,29 @@ module vpn_top(
 
 	I2CTransceiver i2c_txvr(
 		.clk(clk_system),
-		//.clkdiv(16'd250),		//400 kHz
-		.clkdiv(16'd150),		//666 kHz
+		.clkdiv(16'd250),		//400 kHz
 		.i2c_scl(i2c_scl),
 		.i2c_sda(i2c_sda),
 		.cin(txvr_cin),
 		.cout(txvr_cout)
 	);
 
-	i2c_in_t	mac_driver_cin;
-	i2c_out_t	mac_driver_cout;
-
-	wire		mac_driver_request;
-	wire		mac_driver_done;
-	wire		mac_driver_ack;
+	i2c_in_t[1:0]	i2c_driver_cin;
+	i2c_out_t[1:0]	i2c_driver_cout;
+	wire[1:0]		i2c_driver_request;
+	wire[1:0]		i2c_driver_done;
+	wire[1:0]		i2c_driver_ack;
 
 	I2CArbiter #(
-		.NUM_PORTS(1)
+		.NUM_PORTS(2)
 	) i2c_arbiter(
 		.clk(clk_system),
 
-		.driver_request(mac_driver_request),
-		.driver_done(mac_driver_done),
-		.driver_ack(mac_driver_ack),
-		.driver_cin(mac_driver_cin),
-		.driver_cout(mac_driver_cout),
+		.driver_request(i2c_driver_request),
+		.driver_done(i2c_driver_done),
+		.driver_ack(i2c_driver_ack),
+		.driver_cin(i2c_driver_cin),
+		.driver_cout(i2c_driver_cout),
 
 		.txvr_cin(txvr_cin),
 		.txvr_cout(txvr_cout)
@@ -191,21 +272,23 @@ module vpn_top(
 	wire		mac_addr_ready;
 	wire		mac_addr_fail;
 	wire[47:0]	mac_addr;
+	wire[127:0]	eeprom_serial;
 
 	//Read from the EEPROM
 	I2CMACAddressReader mac_reader(
 		.clk(clk_system),
 
-		.driver_req(mac_driver_request),
-		.driver_ack(mac_driver_ack),
-		.driver_done(mac_driver_done),
-		.driver_cin(mac_driver_cin),
-		.driver_cout(mac_driver_cout),
+		.driver_req(i2c_driver_request[0]),
+		.driver_ack(i2c_driver_ack[0]),
+		.driver_done(i2c_driver_done[0]),
+		.driver_cin(i2c_driver_cin[0]),
+		.driver_cout(i2c_driver_cout[0]),
 
 		.done(mac_addr_done),
 		.ready(mac_addr_ready),
 		.fail(mac_addr_fail),
-		.mac(mac_addr)
+		.mac(mac_addr),
+		.serial(eeprom_serial)
 	);
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -559,7 +642,7 @@ module vpn_top(
 		.link_up(eth3_link_up)
 	);
 
-	//DEBUG
+	//Tie off unused ports
 	assign eth2_mac_tx_bus = {$bits(EthernetTxBus){1'b0}};
 	assign eth3_mac_tx_bus = {$bits(EthernetTxBus){1'b0}};
 
@@ -602,6 +685,44 @@ module vpn_top(
 	);
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	// RNG used for nonce generation etc
+
+	wire		rng_gen_en;
+	wire		rng_gen_ready;
+	wire		rng_valid;
+	wire[31:0]	rng_out;
+
+	RandomNumberGenerator rng(
+		.clk(clk_system),
+		.clk_ring(clk_ring),
+
+		.gen_en(rng_gen_en),
+		.gen_ready(rng_gen_ready),
+		.rng_valid(rng_valid),
+		.rng_out(rng_out),
+
+		.die_serial_valid(die_serial_valid),
+		.die_serial(die_serial),
+		.eeprom_serial_valid(mac_addr_ready),
+		.eeprom_serial(eeprom_serial),
+
+		.i2c_driver_req(i2c_driver_request[1]),
+		.i2c_driver_ack(i2c_driver_ack[1]),
+		.i2c_driver_done(i2c_driver_done[1]),
+		.i2c_driver_cin(i2c_driver_cin[1]),
+		.i2c_driver_cout(i2c_driver_cout[1]),
+
+		.die_temp(die_temp),
+		.volt_core(volt_core),
+		.volt_ram(volt_ram),
+		.volt_aux(volt_aux),
+		.sensors_update(sensors_update),
+
+		.entropy_en(1'b0),
+		.entropy_data(32'h0)
+	);
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// SSP21 protocol engine
 
 	`include "SSP21.svh"
@@ -612,6 +733,11 @@ module vpn_top(
 		.crypto_mode(SHARED_SECRET),
 		.crypto_psk(256'h0),					//all zeroes key for testing
 
+		.rng_gen_ready(rng_gen_ready),
+		.rng_gen_en(rng_gen_en),
+		.rng_valid(rng_valid),
+		.rng_out(rng_out),
+
 		.udp_rx_bus(eth0_udpv4_rx_bus),
 		.udp_tx_bus(eth0_udpv4_tx_bus)
 	);
@@ -619,14 +745,16 @@ module vpn_top(
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Debug LA
 
+	/*
 	ila_2 tx_ila(
 		.clk(clk_system),
-		.probe0(eth0_ipstack.ipv4_tx_l2_bus),
-		.probe1(eth0_ipstack.ipv4_tx_l3_bus),
-		.probe2(eth0_ipstack.ipv4_tx_arp_bus),
-		.probe3(eth0_ipstack.arp_query_en),
-		.probe4(eth0_ipstack.arp_query_ip),
-		.probe5(eth0_ipstack.tx_l2_bus)
+		.probe0(rng_gen_en),
+		.probe1(rng_valid),
+		.probe2(rng_out),
+		.probe3(rng.prng.out_words_valid),
+		.probe4(rng.prng.gen_state),
+		.probe5(rng.prng.read_pending)
 	);
+	*/
 
 endmodule
